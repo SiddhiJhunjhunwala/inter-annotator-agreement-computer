@@ -45,8 +45,6 @@ RULES APPLIED:
       agreeing numeric score.
     - Agreement is computed overall, and (if --type-col is given and found)
       broken out by that column's categories.
-    - Each run appends a NEW tab named "<output-tab>_<timestamp>" -- nothing
-      existing is modified or overwritten, so past runs are preserved.
 """
 
 import sys
