@@ -1,27 +1,45 @@
+# Command
+``` python3 compute_agreement.py \
+  "https://docs.google.com/spreadsheets/d/1vwGiZGsVoB0iBISF1kPSSKmCUTLlRlNJPRMXm9Pcj2E/edit" \
+  service_account.json \
+  --input-tab "Human_Annotations_AnswerScoring" \
+  --output-tab "Inter_Annotator_Agreement" \
+  --rater1-col "Lisa's Score" \
+  --rater2-col "Heather's score" \
+  --type-col "Question Type"```
+
 # Inter-Annotator Agreement Script
 
 Computes Cohen's kappa, quadratic weighted kappa, and percent agreement
-between two raters (Lisa & Heather) scoring comprehension questions, reading
-directly from a live Google Sheet, and writes the results back into that
-same sheet as a new tab.
+between two raters, reading directly from a live Google Sheet, and writes
+the results back into that same sheet as a new tab.
+
+Fully generic — the input tab, output tab, and rater/grouping columns are
+all passed as command-line arguments and matched **by header text**, not
+fixed column letters or a hardcoded sheet. Point it at any sheet with two
+score columns and it works.
 
 ## What it does
 
-- Reads the `Sheet1` tab of your Google Sheet.
-- Compares **Lisa's Score** (column L) vs **Heather's score** (column N).
-- Only counts rows where **both** raters gave a numeric score (0/1/2).
+- Reads a tab you specify from your Google Sheet.
+- Auto-detects the header row (scans the first 10 rows for one containing
+  both rater column headers you named), then finds the two rater columns by
+  header text.
+- Only counts rows where **both** raters gave a numeric score.
   - Rows blank on either side are skipped.
-  - Rows scored as text (e.g. `"Connection"` / `"connection"`) are skipped —
+  - Rows scored as non-numeric text (e.g. `"Connection"`) are skipped —
     they don't count as agreement or disagreement.
-  - If Heather's cell is a formula like `=L3` (meaning "same as Lisa"), the
-    script reads the calculated value, so it counts as a normal agreeing
-    score.
-- Computes agreement **overall** and broken out **by Question Type**
-  (Literal / Inferential / Connection / etc.).
-- Adds a brand-new tab named `Agreement_<timestamp>` to the live Google
-  Sheet with the results and the config used. Nothing existing is
-  overwritten, and every run keeps its own tab, so you can compare runs
-  over time.
+  - If a cell is a formula like `=L3` (meaning "same as the other rater"),
+    the script reads the calculated value, so it counts as a normal
+    agreeing score.
+- Computes agreement **overall**, and — if you pass a `--type-col` — broken
+  out by that column's categories too.
+- Writes the results and the exact config used into the tab named by
+  `--output-tab`. If that tab doesn't exist yet, it's created. If it
+  already exists (e.g. from a previous run), the new results are
+  **appended below the existing content**, separated by a divider line —
+  nothing is overwritten, and the tab name stays the same every time, so
+  your run history accumulates in one place.
 
 ## One-time setup
 
@@ -40,8 +58,8 @@ same sheet as a new tab.
      Name it anything (e.g. `agreement-script`).
    - Open the new service account → **Keys** tab → **Add Key → Create new
      key → JSON**. This downloads a `.json` credentials file — save it
-     somewhere on your machine (don't commit it to git / share it publicly,
-     it grants API access).
+     somewhere on your machine (don't commit it to git / share it
+     publicly, it grants API access — see `.gitignore`).
 
 3. **Sharing:**
    - If your sheet is set to *"Anyone with the link can edit"*, no extra
@@ -53,22 +71,38 @@ same sheet as a new tab.
 ## Usage
 
 ```bash
-python3 compute_agreement.py "<google_sheet_url>" <path_to_service_account.json>
+python3 compute_agreement.py <google_sheet_url> <service_account.json> \
+  --input-tab "<tab to read>" \
+  --output-tab "<base name for results tab>" \
+  --rater1-col "<header text for rater 1's score column>" \
+  --rater2-col "<header text for rater 2's score column>" \
+  [--type-col "<header text for a grouping column>"] \
+  [--header-row N]
 ```
 
-Example:
+### Example
+
 ```bash
 python3 compute_agreement.py \
-  "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/edit" \
-  ./service_account.json
+  "https://docs.google.com/spreadsheets/d/1vwGiZGsVoB0iBISF1kPSSKmCUTLlRlNJPRMXm9Pcj2E/edit" \
+  service_account.json \
+  --input-tab "Human_Annotations_AnswerScoring" \
+  --output-tab "Inter_Annotator_Agreement" \
+  --rater1-col "Lisa's Score" \
+  --rater2-col "Heather's score"
 ```
 
-You'll see console output like:
+Add `--type-col "Question Type"` (or whatever your grouping column is
+called) to also get a breakdown by category. Add `--header-row 2` if the
+script's auto-detection ever picks the wrong row.
+
+### Console output looks like
 
 ```
+Header row detected: 2
 Total data rows scanned: 162
 Rows skipped (blank on one/both sides): 0
-Rows skipped (non-numeric, e.g. 'Connection'): 50
+Rows skipped (non-numeric): 50
 Rows used for agreement: 112
 
 === OVERALL ===
@@ -77,30 +111,27 @@ Rows used for agreement: 112
   Quadratic weighted kappa: 0.8467
   Percent agreement: 0.8393
 
-=== BY QUESTION TYPE ===
-  Literal:
-    n: 47
-    ...
-
-Wrote results into new tab 'Agreement_2026-07-14_16-53-23' in the live Google Sheet.
+Appended results to tab 'Inter_Annotator_Agreement' (starting at row 24) in the live Google Sheet.
 ```
 
-And a new tab will appear in your Google Sheet with the same info plus the
-exact config used for that run.
+That tab appears (or grows) in your Google Sheet with the same results plus
+the exact config used for that run (input tab, columns, header row,
+exclusion rules, row counts). Run it again later and the next block gets
+appended below the last one, separated by a `====` divider line, rather
+than creating a new tab.
 
-## Customizing for a different sheet layout
+## Arguments reference
 
-Edit the config block near the top of `compute_agreement.py`:
-
-```python
-SHEET_NAME = "Sheet1"     # which tab to read
-DATA_START_ROW = 3        # first row of actual data
-TYPE_COL = "C"            # Question Type column
-RATER1_COL = "L"          # Lisa's score column
-RATER2_COL = "N"          # Heather's score column
-RATER1_NAME = "Lisa"
-RATER2_NAME = "Heather"
-```
+| Argument | Required? | Description |
+|---|---|---|
+| `sheet_url` | yes | Full Google Sheets URL (or bare spreadsheet ID) |
+| `service_account_json` | yes | Path to your service account credentials file |
+| `--input-tab` | yes | Name of the tab/worksheet to read annotations from |
+| `--output-tab` | yes | Name of the results tab. Created if it doesn't exist; otherwise new results are appended below existing content |
+| `--rater1-col` | yes | Exact header text of rater 1's score column |
+| `--rater2-col` | yes | Exact header text of rater 2's score column |
+| `--type-col` | no | Header text of a column to group agreement by (e.g. "Question Type") |
+| `--header-row` | no | Force which row (1-indexed) has the headers, if auto-detection picks wrong |
 
 ## Troubleshooting
 
@@ -108,5 +139,6 @@ RATER2_NAME = "Heather"
 |---|---|
 | `PERMISSION_DENIED` / `403` | Sheets/Drive API not enabled, or sheet not shared with the service account |
 | `SpreadsheetNotFound` | Wrong URL, or sheet not accessible to the service account |
-| `WorksheetNotFound: Sheet1` | Your tab has a different name — update `SHEET_NAME` |
-| Kappa shows `n/a` for a group | Only one score value appears in that group (e.g. everyone scored 0) — kappa is undefined in that case, percent agreement still applies |
+| `WorksheetNotFound: <name>` | `--input-tab` doesn't match the real tab name exactly (check spelling/spaces) |
+| `Could not find a header row containing both '...' and '...'` | Header text doesn't match exactly — check for typos, extra spaces, or try `--header-row` to force the right row |
+| Kappa shows `n/a` for a group | Only one score value appears in that group (e.g. everyone scored 0) — kappa is undefined in that case; percent agreement still applies |
