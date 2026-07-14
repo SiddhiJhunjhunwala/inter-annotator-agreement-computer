@@ -73,6 +73,11 @@ def parse_args():
     p.add_argument("--rater1-col", required=True, help="Header text of rater 1's score column")
     p.add_argument("--rater2-col", required=True, help="Header text of rater 2's score column")
     p.add_argument("--type-col", default=None, help="Header text of a column to group agreement by (optional)")
+    p.add_argument("--include-types", default=None,
+                    help="Comma-separated list of question-type values to restrict EVERYTHING to "
+                         "(overall + breakdown). Rows with any other type are excluded and logged "
+                         "in Skipped Rows. Matching is case-insensitive. Requires --type-col. "
+                         "Example: --include-types \"Literal,Inferential\"")
     p.add_argument("--header-row", type=int, default=None,
                     help="Row number (1-indexed) containing column headers. "
                          "If omitted, the script auto-detects the row containing both rater column headers.")
@@ -171,28 +176,38 @@ def filter_numeric_pairs(rows):
 
 
 def compute_metrics(pairs):
-    if len(pairs) < 2:
+    n = len(pairs)
+    if n == 0:
         return None
     y1 = [p[2] for p in pairs]
     y2 = [p[3] for p in pairs]
+    pct_agree = sum(1 for a, b in zip(y1, y2) if a == b) / n
+
+    if n < 2:
+        return {
+            "n": n, "cohens_kappa": None, "quadratic_weighted_kappa": None,
+            "percent_agreement": pct_agree, "kappa_na_reason": "fewer than 2 rows",
+        }
+
     labels = sorted(set(y1) | set(y2))
     if len(labels) < 2:
-        kappa = None
-        qkappa = None
-    else:
-        kappa = cohen_kappa_score(y1, y2, labels=labels)
-        qkappa = cohen_kappa_score(y1, y2, labels=labels, weights="quadratic")
-    pct_agree = sum(1 for a, b in zip(y1, y2) if a == b) / len(y1)
+        return {
+            "n": n, "cohens_kappa": None, "quadratic_weighted_kappa": None,
+            "percent_agreement": pct_agree, "kappa_na_reason": "only one score value present",
+        }
+
+    kappa = cohen_kappa_score(y1, y2, labels=labels)
+    qkappa = cohen_kappa_score(y1, y2, labels=labels, weights="quadratic")
     return {
-        "n": len(pairs),
-        "cohens_kappa": kappa,
-        "quadratic_weighted_kappa": qkappa,
-        "percent_agreement": pct_agree,
+        "n": n, "cohens_kappa": kappa, "quadratic_weighted_kappa": qkappa,
+        "percent_agreement": pct_agree, "kappa_na_reason": None,
     }
 
 
-def fmt(x):
-    return "n/a (only one label present)" if x is None else round(x, 4)
+def fmt(x, reason=None):
+    if x is not None:
+        return round(x, 4)
+    return f"n/a ({reason})" if reason else "n/a"
 
 
 def main():
@@ -215,6 +230,23 @@ def main():
 
     rows = load_scores(all_values, header_row, c1, c2, ct)
     pairs, skipped_blank, skipped_text, skipped_details = filter_numeric_pairs(rows)
+
+    skipped_type_filtered = 0
+    if args.include_types:
+        if ct is None:
+            print(f"Warning: --include-types was given but no --type-col was found/provided; "
+                  f"ignoring --include-types.")
+        else:
+            allowed = {t.strip().title() for t in args.include_types.split(",") if t.strip()}
+            kept_pairs = []
+            for r, qtype, s1, s2 in pairs:
+                if qtype in allowed:
+                    kept_pairs.append((r, qtype, s1, s2))
+                else:
+                    skipped_type_filtered += 1
+                    skipped_details.append((r, qtype, s1, s2, f"question type not in --include-types ({qtype})"))
+            pairs = kept_pairs
+
     overall = compute_metrics(pairs)
 
     by_type = {}
@@ -232,13 +264,15 @@ def main():
     print(f"Total data rows scanned: {len(rows)}")
     print(f"Rows skipped (blank on one/both sides): {skipped_blank}")
     print(f"Rows skipped (non-numeric): {skipped_text} (see 'Skipped Rows' section in the output tab for details)")
+    if args.include_types:
+        print(f"Rows skipped (question type not in --include-types): {skipped_type_filtered}")
     print(f"Rows used for agreement: {len(pairs)}\n")
 
     print("=== OVERALL ===")
     if overall:
         print(f"  n: {overall['n']}")
-        print(f"  Cohen's kappa: {fmt(overall['cohens_kappa'])}")
-        print(f"  Quadratic weighted kappa: {fmt(overall['quadratic_weighted_kappa'])}")
+        print(f"  Cohen's kappa: {fmt(overall['cohens_kappa'], overall['kappa_na_reason'])}")
+        print(f"  Quadratic weighted kappa: {fmt(overall['quadratic_weighted_kappa'], overall['kappa_na_reason'])}")
         print(f"  Percent agreement: {fmt(overall['percent_agreement'])}")
     else:
         print("  Not enough data.")
@@ -250,8 +284,8 @@ def main():
             print(f"  {t}:")
             if m:
                 print(f"    n: {m['n']}")
-                print(f"    Cohen's kappa: {fmt(m['cohens_kappa'])}")
-                print(f"    Quadratic weighted kappa: {fmt(m['quadratic_weighted_kappa'])}")
+                print(f"    Cohen's kappa: {fmt(m['cohens_kappa'], m['kappa_na_reason'])}")
+                print(f"    Quadratic weighted kappa: {fmt(m['quadratic_weighted_kappa'], m['kappa_na_reason'])}")
                 print(f"    Percent agreement: {fmt(m['percent_agreement'])}")
             else:
                 print("    Not enough data.")
@@ -286,6 +320,7 @@ def main():
     out_rows.append(["Rater 1 column", args.rater1_col])
     out_rows.append(["Rater 2 column", args.rater2_col])
     out_rows.append(["Type/grouping column", args.type_col or "(none)"])
+    out_rows.append(["Included question types (Overall + breakdown restricted to)", args.include_types or "(all types)"])
     out_rows.append(["Row inclusion rule", "Both raters must have a numeric score"])
     out_rows.append(["Exclusion rule", "Blank rows and non-numeric scores skipped"])
     out_rows.append(["Formula handling", "Formula cells (e.g. '=L3') read via calculated value"])
@@ -295,6 +330,8 @@ def main():
     out_rows.append(["Total data rows scanned", len(rows)])
     out_rows.append(["Skipped - blank on one/both sides", skipped_blank])
     out_rows.append(["Skipped - non-numeric", skipped_text])
+    if args.include_types:
+        out_rows.append(["Skipped - question type not included", skipped_type_filtered])
     out_rows.append(["Rows used for agreement", len(pairs)])
     out_rows.append([])
     out_rows.append(["Results"])
@@ -302,8 +339,9 @@ def main():
 
     def metric_row(label, m):
         if m:
-            return [label, m["n"], fmt(m["cohens_kappa"]), fmt(m["quadratic_weighted_kappa"]), fmt(m["percent_agreement"])]
-        return [label, "not enough data", "", "", ""]
+            return [label, m["n"], fmt(m["cohens_kappa"], m["kappa_na_reason"]),
+                    fmt(m["quadratic_weighted_kappa"], m["kappa_na_reason"]), fmt(m["percent_agreement"])]
+        return [label, 0, "n/a (no rows)", "n/a (no rows)", "n/a (no rows)"]
 
     out_rows.append(metric_row("Overall", overall))
     for t in types_in_order:

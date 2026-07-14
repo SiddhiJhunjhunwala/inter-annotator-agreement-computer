@@ -1,13 +1,16 @@
 # Command
-``` python3 compute_agreement.py \
-  "https://docs.google.com/spreadsheets/d/1vwGiZGsVoB0iBISF1kPSSKmCUTLlRlNJPRMXm9Pcj2E/edit" \
+
+```
+python3 compute_agreement.py \
+  "" \
   service_account.json \
   --input-tab "Human_Annotations_AnswerScoring" \
   --output-tab "Inter_Annotator_Agreement" \
   --rater1-col "Lisa's Score" \
   --rater2-col "Heather's score" \
-  --type-col "Question Type"```
-
+  --type-col "Question Type" \
+  --include-types "Literal,Inferential"
+```
 # Inter-Annotator Agreement Script
 
 Computes Cohen's kappa, quadratic weighted kappa, and percent agreement
@@ -34,12 +37,22 @@ score columns and it works.
     agreeing score.
 - Computes agreement **overall**, and — if you pass a `--type-col` — broken
   out by that column's categories too.
+- Optional `--include-types "Literal,Inferential"` restricts **both** the
+  overall number and the breakdown to just those category values — useful
+  when some rows belong to types you don't want counted at all (e.g. a
+  handful of numerically-scored "Connection" rows, or blank/other types
+  slipping into "Overall"). Rows outside the included types are excluded
+  and logged in the Skipped Rows section like any other exclusion.
 - Writes the results and the exact config used into the tab named by
   `--output-tab`. If that tab doesn't exist yet, it's created. If it
   already exists (e.g. from a previous run), the new results are
   **appended below the existing content**, separated by a divider line —
   nothing is overwritten, and the tab name stays the same every time, so
   your run history accumulates in one place.
+- Also writes a **Skipped Rows** section listing every excluded row —
+  its sheet row number, question type, both raters' raw values, and the
+  reason (`blank on one/both sides` or `non-numeric score`) — so you can
+  audit exactly what got left out and why, instead of just seeing a count.
 
 ## One-time setup
 
@@ -77,6 +90,7 @@ python3 compute_agreement.py <google_sheet_url> <service_account.json> \
   --rater1-col "<header text for rater 1's score column>" \
   --rater2-col "<header text for rater 2's score column>" \
   [--type-col "<header text for a grouping column>"] \
+  [--include-types "<comma-separated type values to keep, e.g. Literal,Inferential>"] \
   [--header-row N]
 ```
 
@@ -93,8 +107,11 @@ python3 compute_agreement.py \
 ```
 
 Add `--type-col "Question Type"` (or whatever your grouping column is
-called) to also get a breakdown by category. Add `--header-row 2` if the
-script's auto-detection ever picks the wrong row.
+called) to also get a breakdown by category. Add `--include-types
+"Literal,Inferential"` to restrict overall + breakdown to just those types
+(e.g. to keep a couple of numerically-scored "Connection" rows, or a blank
+type, out of your headline number). Add `--header-row 2` if the script's
+auto-detection ever picks the wrong row.
 
 ### Console output looks like
 
@@ -131,6 +148,7 @@ than creating a new tab.
 | `--rater1-col` | yes | Exact header text of rater 1's score column |
 | `--rater2-col` | yes | Exact header text of rater 2's score column |
 | `--type-col` | no | Header text of a column to group agreement by (e.g. "Question Type") |
+| `--include-types` | no | Comma-separated type values to restrict overall + breakdown to (e.g. `"Literal,Inferential"`). Requires `--type-col`. Excluded rows are logged in Skipped Rows |
 | `--header-row` | no | Force which row (1-indexed) has the headers, if auto-detection picks wrong |
 
 ## Troubleshooting
