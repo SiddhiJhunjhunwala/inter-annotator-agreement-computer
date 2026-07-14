@@ -45,6 +45,8 @@ RULES APPLIED:
       agreeing numeric score.
     - Agreement is computed overall, and (if --type-col is given and found)
       broken out by that column's categories.
+    - Each run appends a NEW tab named "<output-tab>_<timestamp>" -- nothing
+      existing is modified or overwritten, so past runs are preserved.
 """
 
 import sys
@@ -154,15 +156,18 @@ def filter_numeric_pairs(rows):
     kept = []
     skipped_blank = 0
     skipped_text = 0
+    skipped_details = []  # (sheet_row, question_type, rater1_raw, rater2_raw, reason)
     for r, qtype, s1, s2 in rows:
         if s1 is None or s2 is None:
             skipped_blank += 1
+            skipped_details.append((r, normalize_type(qtype), s1, s2, "blank on one/both sides"))
             continue
         if not is_number(s1) or not is_number(s2):
             skipped_text += 1
+            skipped_details.append((r, normalize_type(qtype), s1, s2, "non-numeric score"))
             continue
         kept.append((r, normalize_type(qtype), float(s1), float(s2)))
-    return kept, skipped_blank, skipped_text
+    return kept, skipped_blank, skipped_text, skipped_details
 
 
 def compute_metrics(pairs):
@@ -209,7 +214,7 @@ def main():
               f"skipping by-type breakdown.")
 
     rows = load_scores(all_values, header_row, c1, c2, ct)
-    pairs, skipped_blank, skipped_text = filter_numeric_pairs(rows)
+    pairs, skipped_blank, skipped_text, skipped_details = filter_numeric_pairs(rows)
     overall = compute_metrics(pairs)
 
     by_type = {}
@@ -226,7 +231,7 @@ def main():
     print(f"Header row detected: {header_row}")
     print(f"Total data rows scanned: {len(rows)}")
     print(f"Rows skipped (blank on one/both sides): {skipped_blank}")
-    print(f"Rows skipped (non-numeric): {skipped_text}")
+    print(f"Rows skipped (non-numeric): {skipped_text} (see 'Skipped Rows' section in the output tab for details)")
     print(f"Rows used for agreement: {len(pairs)}\n")
 
     print("=== OVERALL ===")
@@ -303,6 +308,13 @@ def main():
     out_rows.append(metric_row("Overall", overall))
     for t in types_in_order:
         out_rows.append(metric_row(t, type_metrics[t]))
+
+    if skipped_details:
+        out_rows.append([])
+        out_rows.append([f"Skipped Rows ({len(skipped_details)})"])
+        out_rows.append(["Sheet row", "Question Type", args.rater1_col + " (raw)", args.rater2_col + " (raw)", "Reason"])
+        for r, qtype, s1, s2, reason in skipped_details:
+            out_rows.append([r, qtype, s1 if s1 is not None else "(blank)", s2 if s2 is not None else "(blank)", reason])
 
     rows_needed = start_row + len(out_rows) - 1
     if rows_needed > out_ws.row_count:
